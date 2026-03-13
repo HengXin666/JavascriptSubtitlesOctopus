@@ -470,7 +470,7 @@ var messageBuffer = null;
 var messageResenderTimeout = null;
 
 function messageResender() {
-    if (calledMain) {
+    if (calledRun) {
         assert(messageBuffer && messageBuffer.length > 0);
         messageResenderTimeout = null;
         messageBuffer.forEach(function (message) {
@@ -491,7 +491,7 @@ function _applyKeys(input, output) {
 }
 
 function onMessageFromMainEmscriptenThread(message) {
-    if (!calledMain && !message.data.preMain) {
+    if (!calledRun && !message.data.preMain) {
         if (!messageBuffer) {
             messageBuffer = [];
             messageResenderTimeout = setTimeout(messageResender, 50);
@@ -499,7 +499,7 @@ function onMessageFromMainEmscriptenThread(message) {
         messageBuffer.push(message);
         return;
     }
-    if (calledMain && messageResenderTimeout) {
+    if (calledRun && messageResenderTimeout) {
         clearTimeout(messageResenderTimeout);
         messageResender();
     }
@@ -690,6 +690,34 @@ function onMessageFromMainEmscriptenThread(message) {
             var i = message.data.index;
             self.octObj.removeStyle(i);
             break;
+        case 'set-channel-image': {
+            var channel = message.data.channel;
+            var imageData = message.data.imageData;
+            if (imageData) {
+                var imgPath = '/images/channel_' + channel + '.png';
+                try { Module['FS_createPath']('/', 'images', true, true); } catch(e) {}
+                Module['FS'].writeFile(imgPath, new Uint8Array(imageData));
+                self.octObj.setChannelImage(channel, imgPath);
+            } else {
+                self.octObj.setChannelImage(channel, '');
+            }
+            // Re-render current frame with new texture
+            self.getRenderMethod()();
+            break;
+        }
+        case 'write-file': {
+            var path = message.data.path;
+            var data = message.data.data;
+            if (path && data) {
+                // Ensure parent directory exists
+                var dir = path.substring(0, path.lastIndexOf('/'));
+                if (dir) {
+                    try { Module['FS_createPath']('/', dir.replace(/^\//, ''), true, true); } catch(e) {}
+                }
+                Module['FS'].writeFile(path, new Uint8Array(data));
+            }
+            break;
+        }
         case 'runBenchmark': {
             self.runBenchmark();
             break;

@@ -192,4 +192,6 @@ interface SubtitleOctopus {
     void removeAllEvents();
     void setMemoryLimits(long glyph_limit, long bitmap_cache_limit);
     RenderBlendResult renderBlend(double tm, long force);
+    void setChannelImage(long channel, [Const] DOMString path);
+    void writeToFile([Const] DOMString path, [Const] DOMString data, long size);
 };

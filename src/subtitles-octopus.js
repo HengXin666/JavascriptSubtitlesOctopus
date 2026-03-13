@@ -702,6 +702,22 @@ var SubtitlesOctopus = function (options) {
         });
     };
 
+    self.setChannelImage = function (channel, imageData) {
+        self.worker.postMessage({
+            target: 'set-channel-image',
+            channel: channel,
+            imageData: imageData ? imageData.buffer || imageData : null
+        });
+    };
+
+    self.writeFile = function (path, data) {
+        self.worker.postMessage({
+            target: 'write-file',
+            path: path,
+            data: data.buffer || data
+        });
+    };
+
     self.init();
 };
 

@@ -12,6 +12,134 @@
 
 #include "libass.cpp"
 
+/* stb_image for VSFilterMod image rendering */
+#define STB_IMAGE_IMPLEMENTATION
+#define STBI_ONLY_PNG
+#define STBI_ONLY_JPEG
+#define STBI_ONLY_BMP
+#define STBI_NO_HDR
+#define STBI_NO_LINEAR
+#include "stb_image.h"
+
+/* ---- VSFilterMod Image Support ---- */
+#define VSFMOD_IMG_CHANNELS 4
+#define VSFMOD_IMG_CACHE_SIZE 64
+#define VSFMOD_MAX_PATH_LEN 1024
+#define VSFMOD_MAX_IMG_WIDTH 4096
+#define VSFMOD_MAX_IMG_HEIGHT 4096
+
+typedef struct {
+    uint8_t *pixels;        /* RGBA pixel data */
+    int width;
+    int height;
+    char path[VSFMOD_MAX_PATH_LEN];
+    uint32_t hash;
+    int ref_count;
+} VSFModImage;
+
+typedef struct {
+    VSFModImage *images[VSFMOD_IMG_CHANNELS];
+    bool active[VSFMOD_IMG_CHANNELS];
+} VSFModImageState;
+
+typedef struct {
+    VSFModImage entries[VSFMOD_IMG_CACHE_SIZE];
+    int count;
+} VSFModImageCache;
+
+static uint32_t vsfmod_hash_string(const char *str) {
+    uint32_t hash = 5381;
+    int c;
+    while ((c = (unsigned char)*str++))
+        hash = ((hash << 5) + hash) + c;
+    return hash;
+}
+
+static VSFModImage *vsfmod_cache_find(VSFModImageCache *cache, const char *path, uint32_t hash) {
+    for (int i = 0; i < cache->count; i++) {
+        if (cache->entries[i].hash == hash &&
+            strcmp(cache->entries[i].path, path) == 0 &&
+            cache->entries[i].pixels != NULL)
+            return &cache->entries[i];
+    }
+    return NULL;
+}
+
+static VSFModImage *vsfmod_cache_alloc(VSFModImageCache *cache) {
+    if (cache->count < VSFMOD_IMG_CACHE_SIZE)
+        return &cache->entries[cache->count++];
+    int min_idx = 0, min_ref = cache->entries[0].ref_count;
+    for (int i = 1; i < VSFMOD_IMG_CACHE_SIZE; i++) {
+        if (cache->entries[i].ref_count < min_ref) {
+            min_ref = cache->entries[i].ref_count;
+            min_idx = i;
+        }
+    }
+    if (cache->entries[min_idx].pixels) free(cache->entries[min_idx].pixels);
+    memset(&cache->entries[min_idx], 0, sizeof(VSFModImage));
+    return &cache->entries[min_idx];
+}
+
+static VSFModImage *vsfmod_image_load(VSFModImageCache *cache, const char *path) {
+    if (!path || !path[0] || strlen(path) >= VSFMOD_MAX_PATH_LEN) return NULL;
+    uint32_t hash = vsfmod_hash_string(path);
+    VSFModImage *cached = vsfmod_cache_find(cache, path, hash);
+    if (cached) { cached->ref_count++; return cached; }
+    int w, h, channels;
+    uint8_t *pixels = stbi_load(path, &w, &h, &channels, 4);
+    if (!pixels) {
+        fprintf(stderr, "[vsfiltermod] Failed to load image: %s (%s)\n", path, stbi_failure_reason());
+        return NULL;
+    }
+    if (w > VSFMOD_MAX_IMG_WIDTH || h > VSFMOD_MAX_IMG_HEIGHT) {
+        fprintf(stderr, "[vsfiltermod] Image too large: %s (%dx%d)\n", path, w, h);
+        stbi_image_free(pixels); return NULL;
+    }
+    VSFModImage *img = vsfmod_cache_alloc(cache);
+    if (!img) { stbi_image_free(pixels); return NULL; }
+    img->pixels = pixels; img->width = w; img->height = h;
+    strncpy(img->path, path, VSFMOD_MAX_PATH_LEN - 1);
+    img->path[VSFMOD_MAX_PATH_LEN - 1] = '\0';
+    img->hash = hash; img->ref_count = 1;
+    return img;
+}
+
+static void vsfmod_image_release(VSFModImage *img) {
+    if (img && img->ref_count > 0) img->ref_count--;
+}
+
+static void vsfmod_cache_init(VSFModImageCache *cache) { memset(cache, 0, sizeof(*cache)); }
+
+static void vsfmod_cache_destroy(VSFModImageCache *cache) {
+    for (int i = 0; i < cache->count; i++) {
+        if (cache->entries[i].pixels) { free(cache->entries[i].pixels); cache->entries[i].pixels = NULL; }
+    }
+    cache->count = 0;
+}
+
+static void vsfmod_state_init(VSFModImageState *state) { memset(state, 0, sizeof(*state)); }
+
+static void vsfmod_state_reset(VSFModImageState *state) {
+    for (int i = 0; i < VSFMOD_IMG_CHANNELS; i++) {
+        if (state->images[i]) { vsfmod_image_release(state->images[i]); state->images[i] = NULL; }
+        state->active[i] = false;
+    }
+}
+
+static void vsfmod_state_set_image(VSFModImageState *state, int channel, VSFModImage *img) {
+    if (channel < 0 || channel >= VSFMOD_IMG_CHANNELS) return;
+    if (state->images[channel]) vsfmod_image_release(state->images[channel]);
+    state->images[channel] = img;
+    state->active[channel] = (img != NULL);
+    if (img) img->ref_count++;
+}
+
+static bool vsfmod_state_has_images(const VSFModImageState *state) {
+    for (int i = 0; i < VSFMOD_IMG_CHANNELS; i++)
+        if (state->active[i]) return true;
+    return false;
+}
+
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
 #else
@@ -238,6 +366,8 @@ private:
     RenderBlendResult m_blendResult;
     bool drop_animations;
     int scanned_events; // next unscanned event index
+    VSFModImageCache m_image_cache;
+    VSFModImageState m_image_state;
 public:
     ASS_Library* ass_library;
     ASS_Renderer* ass_renderer;
@@ -259,6 +389,8 @@ public:
         canvas_h = 0;
         drop_animations = false;
         scanned_events = 0;
+        vsfmod_cache_init(&m_image_cache);
+        vsfmod_state_init(&m_image_state);
     }
 
     void setLogLevel(int level) {
@@ -356,6 +488,8 @@ public:
         ass_renderer_done(ass_renderer);
         ass_library_done(ass_library);
         m_blend.clear();
+        vsfmod_cache_destroy(&m_image_cache);
+        vsfmod_state_reset(&m_image_state);
     }
     void reloadLibrary() {
         quitLibrary();
@@ -413,6 +547,53 @@ public:
         ass_set_cache_limits(ass_renderer, glyph_limit, bitmap_cache_limit);
     }
 
+    /* ---- VSFilterMod Image API ---- */
+
+    /**
+     * Set an image for a specific channel (0=primary, 1=secondary, 2=border, 3=shadow).
+     * The image is loaded from the virtual filesystem path.
+     * Pass empty string or NULL to clear a channel.
+     */
+    void setChannelImage(int channel, const char *path) {
+        if (channel < 0 || channel >= VSFMOD_IMG_CHANNELS) return;
+        if (!path || !path[0]) {
+            vsfmod_state_set_image(&m_image_state, channel, NULL);
+            return;
+        }
+        VSFModImage *img = vsfmod_image_load(&m_image_cache, path);
+        if (img) {
+            vsfmod_state_set_image(&m_image_state, channel, img);
+            vsfmod_image_release(img); // state holds its own ref
+        }
+    }
+
+    /**
+     * Write a file to the virtual filesystem.
+     * Used by JS to inject image files before calling setChannelImage.
+     */
+    void writeToFile(const char *path, const void *data, int size) {
+#ifdef __EMSCRIPTEN__
+        // Ensure directory exists
+        std::string pathStr(path);
+        size_t lastSlash = pathStr.rfind('/');
+        if (lastSlash != std::string::npos) {
+            std::string dir = pathStr.substr(0, lastSlash);
+            EM_ASM({
+                var dir = UTF8ToString($0);
+                try { FS.mkdirTree(dir); } catch(e) {}
+            }, dir.c_str());
+        }
+
+        FILE *fp = fopen(path, "wb");
+        if (fp) {
+            fwrite(data, 1, size, fp);
+            fclose(fp);
+        } else {
+            fprintf(stderr, "jso: Failed to write file: %s\n", path);
+        }
+#endif
+    }
+
     RenderBlendResult* renderBlend(double tm, int force) {
         m_blendResult.blend_time = 0.0;
         m_blendResult.image = NULL;
@@ -453,6 +634,7 @@ public:
         }
 
         // blend things in
+        bool has_textures = vsfmod_state_has_images(&m_image_state);
         for (cur = img; cur != NULL; cur = cur->next) {
             int curw = cur->w, curh = cur->h;
             if (curw == 0 || curh == 0) continue; // skip empty images
@@ -464,29 +646,87 @@ public:
 
             unsigned char *bitmap = cur->bitmap;
             float normalized_a = a / 255.0;
-            float r = ((cur->color >> 24) & 0xFF) / 255.0;
-            float g = ((cur->color >> 16) & 0xFF) / 255.0;
-            float b = ((cur->color >> 8) & 0xFF) / 255.0;
 
-            int buf_line_coord = cury * width;
-            for (int y = 0, bitmap_offset = 0; y < curh; y++, bitmap_offset += curs, buf_line_coord += width)
-            {
-                for (int x = 0; x < curw; x++)
+            // Determine channel for VSFilterMod texture lookup
+            int channel = 0; // default: primary
+            if (has_textures) {
+                switch (cur->type) {
+                    case 0: channel = 0; break; // primary fill
+                    case 1: channel = 2; break; // border/outline
+                    case 2: channel = 3; break; // shadow
+                    default: channel = 0; break;
+                }
+            }
+
+            const VSFModImage *texture = (has_textures && m_image_state.active[channel])
+                                         ? m_image_state.images[channel] : NULL;
+
+            if (texture && texture->pixels) {
+                // Textured blend: use texture colors instead of solid color
+                int tex_w = texture->width;
+                int tex_h = texture->height;
+                const uint8_t *tex_pixels = texture->pixels;
+
+                int buf_line_coord = cury * width;
+                for (int y = 0, bitmap_offset = 0; y < curh; y++, bitmap_offset += curs, buf_line_coord += width)
                 {
-                    float pix_alpha = bitmap[bitmap_offset + x] * normalized_a / 255.0;
-                    float inv_alpha = 1.0 - pix_alpha;
+                    int tex_y = ((cur->dst_y + y) % tex_h + tex_h) % tex_h;
+                    const uint8_t *tex_row = tex_pixels + tex_y * tex_w * 4;
 
-                    int buf_coord = (buf_line_coord + curx + x) << 2;
-                    float *buf_r = buf + buf_coord;
-                    float *buf_g = buf + buf_coord + 1;
-                    float *buf_b = buf + buf_coord + 2;
-                    float *buf_a = buf + buf_coord + 3;
+                    for (int x = 0; x < curw; x++)
+                    {
+                        float pix_alpha = bitmap[bitmap_offset + x] * normalized_a / 255.0;
+                        if (pix_alpha < MIN_UINT8_CAST) continue;
 
-                    // do the compositing, pre-multiply image RGB with alpha for current pixel
-                    *buf_a = pix_alpha + *buf_a * inv_alpha;
-                    *buf_r = r * pix_alpha + *buf_r * inv_alpha;
-                    *buf_g = g * pix_alpha + *buf_g * inv_alpha;
-                    *buf_b = b * pix_alpha + *buf_b * inv_alpha;
+                        int tex_x = ((cur->dst_x + x) % tex_w + tex_w) % tex_w;
+                        const uint8_t *tp = tex_row + tex_x * 4;
+
+                        // Combine glyph alpha with texture alpha
+                        float tex_alpha = pix_alpha * (tp[3] / 255.0);
+                        if (tex_alpha < MIN_UINT8_CAST) continue;
+
+                        float inv_alpha = 1.0 - tex_alpha;
+                        float r = tp[0] / 255.0;
+                        float g = tp[1] / 255.0;
+                        float b = tp[2] / 255.0;
+
+                        int buf_coord = (buf_line_coord + curx + x) << 2;
+                        float *buf_r = buf + buf_coord;
+                        float *buf_g = buf + buf_coord + 1;
+                        float *buf_b = buf + buf_coord + 2;
+                        float *buf_a = buf + buf_coord + 3;
+
+                        *buf_a = tex_alpha + *buf_a * inv_alpha;
+                        *buf_r = r * tex_alpha + *buf_r * inv_alpha;
+                        *buf_g = g * tex_alpha + *buf_g * inv_alpha;
+                        *buf_b = b * tex_alpha + *buf_b * inv_alpha;
+                    }
+                }
+            } else {
+                // Original solid color blend
+                float r = ((cur->color >> 24) & 0xFF) / 255.0;
+                float g = ((cur->color >> 16) & 0xFF) / 255.0;
+                float b = ((cur->color >> 8) & 0xFF) / 255.0;
+
+                int buf_line_coord = cury * width;
+                for (int y = 0, bitmap_offset = 0; y < curh; y++, bitmap_offset += curs, buf_line_coord += width)
+                {
+                    for (int x = 0; x < curw; x++)
+                    {
+                        float pix_alpha = bitmap[bitmap_offset + x] * normalized_a / 255.0;
+                        float inv_alpha = 1.0 - pix_alpha;
+
+                        int buf_coord = (buf_line_coord + curx + x) << 2;
+                        float *buf_r = buf + buf_coord;
+                        float *buf_g = buf + buf_coord + 1;
+                        float *buf_b = buf + buf_coord + 2;
+                        float *buf_a = buf + buf_coord + 3;
+
+                        *buf_a = pix_alpha + *buf_a * inv_alpha;
+                        *buf_r = r * pix_alpha + *buf_r * inv_alpha;
+                        *buf_g = g * pix_alpha + *buf_g * inv_alpha;
+                        *buf_b = b * pix_alpha + *buf_b * inv_alpha;
+                    }
                 }
             }
         }

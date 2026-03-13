@@ -85,8 +85,8 @@ build/lib/harfbuzz/configure: lib/harfbuzz $(wildcard $(BASE_DIR)build/patches/h
 $(DIST_DIR)/lib/libharfbuzz.a: build/lib/freetype/build_hb/dist_hb/lib/libfreetype.a build/lib/harfbuzz/configure
 	cd build/lib/harfbuzz && \
 	EM_PKG_CONFIG_PATH=$(PKG_CONFIG_PATH):$(BASE_DIR)build/lib/freetype/build_hb/dist_hb/lib/pkgconfig \
-	CFLAGS="-DHB_NO_MT $(CFLAGS)" \
-	CXXFLAGS="-DHB_NO_MT $(CFLAGS)" \
+	CFLAGS="-DHB_NO_MT $(CFLAGS) -Wno-error" \
+	CXXFLAGS="-DHB_NO_MT $(CFLAGS) -Wno-error" \
 	$(call CONFIGURE_AUTO) \
 		--with-freetype \
 	&& \
@@ -144,7 +144,7 @@ OCTP_DEPS = \
 	$(DIST_DIR)/lib/libfontconfig.a \
 	$(DIST_DIR)/lib/libass.a
 
-src/subtitles-octopus-worker.bc: $(OCTP_DEPS) all-src
+src/subtitles-octopus-worker.o: $(OCTP_DEPS) all-src
 .PHONY: all-src
 all-src:
 	$(MAKE) -C src all
@@ -159,15 +159,14 @@ EMCC_COMMON_ARGS = \
 	--embed-file assets/fonts.conf \
 	-s ALLOW_MEMORY_GROWTH=1 \
 	-s NO_FILESYSTEM=0 \
-	--memory-init-file=0 \
 	--no-heap-copy \
 	-o $@
 
-dist: src/subtitles-octopus-worker.bc dist/js/subtitles-octopus-worker.js dist/js/subtitles-octopus-worker-legacy.js dist/js/subtitles-octopus.js dist/js/COPYRIGHT dist/js/default.woff2
+dist: src/subtitles-octopus-worker.o dist/js/subtitles-octopus-worker.js dist/js/subtitles-octopus.js dist/js/default.woff2
 
-dist/js/subtitles-octopus-worker.js: src/subtitles-octopus-worker.bc src/pre-worker.js src/SubOctpInterface.js src/post-worker.js
+dist/js/subtitles-octopus-worker.js: src/subtitles-octopus-worker.o src/pre-worker.js src/SubOctpInterface.js src/post-worker.js
 	mkdir -p dist/js
-	emcc src/subtitles-octopus-worker.bc $(OCTP_DEPS) \
+	emcc src/subtitles-octopus-worker.o $(OCTP_DEPS) \
 		--pre-js src/pre-worker.js \
 		--post-js src/SubOctpInterface.js \
 		--post-js src/post-worker.js \
@@ -175,23 +174,23 @@ dist/js/subtitles-octopus-worker.js: src/subtitles-octopus-worker.bc src/pre-wor
 		-s EVAL_CTORS=1 \
 		$(EMCC_COMMON_ARGS)
 
-dist/js/subtitles-octopus-worker-legacy.js: src/subtitles-octopus-worker.bc src/polyfill.js src/pre-worker.js src/SubOctpInterface.js src/post-worker.js
+dist/js/subtitles-octopus-worker-legacy.js: src/subtitles-octopus-worker.o src/polyfill.js src/pre-worker.js src/SubOctpInterface.js src/post-worker.js
 	mkdir -p dist/js
-	emcc src/subtitles-octopus-worker.bc $(OCTP_DEPS) \
+	emcc src/subtitles-octopus-worker.o $(OCTP_DEPS) \
 		--pre-js src/polyfill.js \
 		--pre-js src/pre-worker.js \
 		--post-js src/SubOctpInterface.js \
 		--post-js src/post-worker.js \
 		-s WASM=0 \
 		-s LEGACY_VM_SUPPORT=1 \
-		-s MIN_CHROME_VERSION=27 \
+		-s MIN_CHROME_VERSION=32 \
 		-s MIN_SAFARI_VERSION=60005 \
 		--closure=0 \
 		$(EMCC_COMMON_ARGS)
 
-dist/js/subtitles-octopus.js: dist/license/all src/subtitles-octopus.js
+dist/js/subtitles-octopus.js: src/subtitles-octopus.js
 	mkdir -p dist/js
-	awk '1 {print "// "$$0}' dist/license/all | cat - src/subtitles-octopus.js > $@
+	cp src/subtitles-octopus.js $@
 
 dist/license/all:
 	@#FIXME: allow -j in toplevel Makefile and reintegrate licence extraction into this file
