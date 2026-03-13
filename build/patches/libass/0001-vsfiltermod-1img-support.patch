@@ -1,0 +1,279 @@
+diff --git a/libass/ass.h b/libass/ass.h
+index b7b1663..3a57244 100644
+--- a/libass/ass.h
++++ b/libass/ass.h
+@@ -79,6 +79,14 @@ typedef struct ass_image {
+         IMAGE_TYPE_SHADOW
+     } type;
+ 
++    // VSFilterMod \1img/\2img/\3img/\4img 纹理路径
++    // channel_images[0] = primary fill (\1img)
++    // channel_images[1] = secondary fill (\2img)
++    // channel_images[2] = outline/border (\3img)
++    // channel_images[3] = shadow (\4img)
++    // 为 NULL 表示该通道不使用纹理
++    const char *channel_images[4];
++
+     // New fields can be added here in new ABI-compatible library releases.
+ } ASS_Image;
+ 
+diff --git a/libass/ass_parse.c b/libass/ass_parse.c
+index fae575a..4ba4da6 100644
+--- a/libass/ass_parse.c
++++ b/libass/ass_parse.c
+@@ -912,6 +912,52 @@ char *ass_parse_tags(RenderContext *state, char *p, char *end, double pwr,
+             else
+                 val = state->style->Encoding;
+             state->font_encoding = val;
++        // VSFilterMod: \1img(path), \2img(path), \3img(path), \4img(path)
++        // 为指定通道设置纹理图片
++        } else if (complex_tag("1img")) {
++            if (nargs) {
++                int len = args[0].end - args[0].start;
++                if (len > 0 && len < 1024) {
++                    free(state->channel_image_path[0]);
++                    state->channel_image_path[0] = strndup(args[0].start, len);
++                }
++            } else {
++                free(state->channel_image_path[0]);
++                state->channel_image_path[0] = NULL;
++            }
++        } else if (complex_tag("2img")) {
++            if (nargs) {
++                int len = args[0].end - args[0].start;
++                if (len > 0 && len < 1024) {
++                    free(state->channel_image_path[1]);
++                    state->channel_image_path[1] = strndup(args[0].start, len);
++                }
++            } else {
++                free(state->channel_image_path[1]);
++                state->channel_image_path[1] = NULL;
++            }
++        } else if (complex_tag("3img")) {
++            if (nargs) {
++                int len = args[0].end - args[0].start;
++                if (len > 0 && len < 1024) {
++                    free(state->channel_image_path[2]);
++                    state->channel_image_path[2] = strndup(args[0].start, len);
++                }
++            } else {
++                free(state->channel_image_path[2]);
++                state->channel_image_path[2] = NULL;
++            }
++        } else if (complex_tag("4img")) {
++            if (nargs) {
++                int len = args[0].end - args[0].start;
++                if (len > 0 && len < 1024) {
++                    free(state->channel_image_path[3]);
++                    state->channel_image_path[3] = strndup(args[0].start, len);
++                }
++            } else {
++                free(state->channel_image_path[3]);
++                state->channel_image_path[3] = NULL;
++            }
+         }
+     }
+ 
+diff --git a/libass/ass_render.c b/libass/ass_render.c
+index d0e1447..fe60ea4 100644
+--- a/libass/ass_render.c
++++ b/libass/ass_render.c
+@@ -224,6 +224,10 @@ static ASS_Image *my_draw_bitmap(unsigned char *bitmap, int bitmap_w,
+     img->buffer = source ? NULL : bitmap;
+     img->ref_count = 0;
+ 
++    // VSFilterMod: 初始化 channel_images 为 NULL
++    for (int i = 0; i < 4; i++)
++        img->result.channel_images[i] = NULL;
++
+     return &img->result;
+ }
+ 
+@@ -824,9 +828,16 @@ static ASS_Image *render_text(RenderContext *state)
+         if (!info->bm_s || state->border_style == 4)
+             continue;
+ 
++        ASS_Image **old_tail = tail;
+         tail =
+             render_glyph(state, info->bm_s, info->x, info->y, info->c[3], 0,
+                          1000000, tail, IMAGE_TYPE_SHADOW, info->image);
++        // VSFilterMod: 为 shadow 层 ASS_Image 设置纹理路径
++        for (ASS_Image **p = old_tail; p != tail; p = &(*p)->next) {
++            for (int ch = 0; ch < 4; ch++)
++                (*p)->channel_images[ch] = info->channel_image_path[ch]
++                    ? strdup(info->channel_image_path[ch]) : NULL;
++        }
+     }
+ 
+     for (unsigned i = 0; i < n_bitmaps; i++) {
+@@ -838,9 +849,16 @@ static ASS_Image *render_text(RenderContext *state)
+                 && (info->effect_timing <= 0)) {
+             // do nothing
+         } else {
++            ASS_Image **old_tail = tail;
+             tail =
+                 render_glyph(state, info->bm_o, info->x, info->y, info->c[2],
+                              0, 1000000, tail, IMAGE_TYPE_OUTLINE, info->image);
++            // VSFilterMod: 为 outline 层 ASS_Image 设置纹理路径
++            for (ASS_Image **p = old_tail; p != tail; p = &(*p)->next) {
++                for (int ch = 0; ch < 4; ch++)
++                    (*p)->channel_images[ch] = info->channel_image_path[ch]
++                        ? strdup(info->channel_image_path[ch]) : NULL;
++            }
+         }
+     }
+ 
+@@ -849,6 +867,7 @@ static ASS_Image *render_text(RenderContext *state)
+         if (!info->bm)
+             continue;
+ 
++        ASS_Image **old_tail = tail;
+         if ((info->effect_type == EF_KARAOKE)
+                 || (info->effect_type == EF_KARAOKE_KO)) {
+             if (info->effect_timing > 0)
+@@ -870,10 +889,22 @@ static ASS_Image *render_text(RenderContext *state)
+             tail =
+                 render_glyph(state, info->bm, info->x, info->y, info->c[0],
+                              0, 1000000, tail, IMAGE_TYPE_CHARACTER, info->image);
++        // VSFilterMod: 为 character 层 ASS_Image 设置纹理路径
++        for (ASS_Image **p = old_tail; p != tail; p = &(*p)->next) {
++            for (int ch = 0; ch < 4; ch++)
++                (*p)->channel_images[ch] = info->channel_image_path[ch]
++                    ? strdup(info->channel_image_path[ch]) : NULL;
++        }
+     }
+ 
+-    for (unsigned i = 0; i < n_bitmaps; i++)
++    for (unsigned i = 0; i < n_bitmaps; i++) {
+         ass_cache_dec_ref(bitmaps[i].image);
++        // VSFilterMod: 释放 CombinedBitmapInfo 中的纹理路径
++        for (int ch = 0; ch < 4; ch++) {
++            free(bitmaps[i].channel_image_path[ch]);
++            bitmaps[i].channel_image_path[ch] = NULL;
++        }
++    }
+ 
+     *tail = 0;
+     blend_vector_clip(state, head);
+@@ -1103,6 +1134,12 @@ void ass_reset_render_context(RenderContext *state, ASS_Style *style)
+     state->frz = style->Angle;
+     state->fax = state->fay = 0.;
+     state->font_encoding = style->Encoding;
++
++    // VSFilterMod: \r 样式重置时清除 \Nimg 纹理路径
++    for (int i = 0; i < 4; i++) {
++        free(state->channel_image_path[i]);
++        state->channel_image_path[i] = NULL;
++    }
+ }
+ 
+ /**
+@@ -1138,6 +1175,11 @@ init_render_context(RenderContext *state, ASS_Event *event)
+     state->effect_skip_timing = 0;
+     state->reset_effect = false;
+ 
++    // VSFilterMod: 初始化 \Nimg 纹理路径
++    for (int i = 0; i < 4; i++) {
++        state->channel_image_path[i] = NULL;
++    }
++
+     ass_apply_transition_effects(state);
+     state->explicit = state->evt_type != EVENT_NORMAL ||
+                       ass_event_has_hard_overrides(event->Text);
+@@ -1157,8 +1199,23 @@ static void free_render_context(RenderContext *state)
+     state->clip_drawing_text.str = NULL;
+     state->clip_drawing_text.len = 0;
+ 
+-    if (state->text_info)
++    // VSFilterMod: 释放 \Nimg 纹理路径
++    for (int i = 0; i < 4; i++) {
++        free(state->channel_image_path[i]);
++        state->channel_image_path[i] = NULL;
++    }
++
++    if (state->text_info) {
++        // VSFilterMod: 释放 GlyphInfo 中的 \Nimg 纹理路径
++        for (int i = 0; i < state->text_info->length; i++) {
++            GlyphInfo *gi = &state->text_info->glyphs[i];
++            for (int ch = 0; ch < 4; ch++) {
++                free(gi->channel_image_path[ch]);
++                gi->channel_image_path[ch] = NULL;
++            }
++        }
+         state->text_info->length = 0;
++    }
+ }
+ 
+ /**
+@@ -2187,6 +2244,12 @@ static bool parse_events(RenderContext *state, ASS_Event *event)
+         info->fay = state->fay;
+         info->fade = state->fade;
+ 
++        // VSFilterMod: 传递 \Nimg 纹理路径到 GlyphInfo
++        for (int i = 0; i < 4; i++) {
++            info->channel_image_path[i] = state->channel_image_path[i]
++                ? strdup(state->channel_image_path[i]) : NULL;
++        }
++
+         info->hspacing_scaled = 0;
+         info->scale_fix = 1;
+ 
+@@ -2561,6 +2624,12 @@ static void render_and_combine_glyphs(RenderContext *state,
+                 current_info->bm = current_info->bm_o = current_info->bm_s = NULL;
+                 current_info->image = NULL;
+ 
++                // VSFilterMod: 传递 \Nimg 纹理路径
++                for (int ch = 0; ch < 4; ch++) {
++                    current_info->channel_image_path[ch] = info->channel_image_path[ch]
++                        ? strdup(info->channel_image_path[ch]) : NULL;
++                }
++
+                 current_info->bitmap_count = current_info->max_bitmap_count = 0;
+                 current_info->bitmaps = malloc(MAX_SUB_BITMAPS_INITIAL * sizeof(BitmapRef));
+                 if (!current_info->bitmaps) {
+@@ -3470,6 +3539,11 @@ void ass_frame_unref(ASS_Image *img)
+     do {
+         ASS_ImagePriv *priv = (ASS_ImagePriv *) img;
+         img = img->next;
++        // VSFilterMod: 释放 \Nimg 纹理路径
++        for (int i = 0; i < 4; i++) {
++            free((void *)priv->result.channel_images[i]);
++            priv->result.channel_images[i] = NULL;
++        }
+         ass_cache_dec_ref(priv->source);
+         ass_aligned_free(priv->buffer);
+         free(priv);
+diff --git a/libass/ass_render.h b/libass/ass_render.h
+index 581c131..3126380 100644
+--- a/libass/ass_render.h
++++ b/libass/ass_render.h
+@@ -115,6 +115,9 @@ typedef struct {
+     int x, y;
+     Bitmap *bm, *bm_o, *bm_s;   // glyphs, outline, shadow bitmaps
+     CompositeHashValue *image;
++
++    // VSFilterMod \Nimg 纹理路径
++    char *channel_image_path[4];
+ } CombinedBitmapInfo;
+ 
+ typedef struct {
+@@ -172,6 +175,9 @@ typedef struct glyph_info {
+     int flags;
+     int fade;
+ 
++    // VSFilterMod \Nimg 纹理路径
++    char *channel_image_path[4];
++
+     int shape_run_id;
+ 
+     ASS_Vector shift;
+@@ -259,6 +265,9 @@ struct render_context {
+     int clip_drawing_scale;
+     int clip_drawing_mode;      // 0 = regular clip, 1 = inverse clip
+ 
++    // VSFilterMod \Nimg 纹理路径
++    char *channel_image_path[4];
++
+     Effect effect_type;
+     int32_t effect_timing;
+     int32_t effect_skip_timing;

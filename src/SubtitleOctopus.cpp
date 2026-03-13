@@ -634,7 +634,6 @@ public:
         }
 
         // blend things in
-        bool has_textures = vsfmod_state_has_images(&m_image_state);
         for (cur = img; cur != NULL; cur = cur->next) {
             int curw = cur->w, curh = cur->h;
             if (curw == 0 || curh == 0) continue; // skip empty images
@@ -647,19 +646,32 @@ public:
             unsigned char *bitmap = cur->bitmap;
             float normalized_a = a / 255.0;
 
-            // Determine channel for VSFilterMod texture lookup
-            int channel = 0; // default: primary
-            if (has_textures) {
-                switch (cur->type) {
-                    case 0: channel = 0; break; // primary fill
-                    case 1: channel = 2; break; // border/outline
-                    case 2: channel = 3; break; // shadow
-                    default: channel = 0; break;
-                }
+            // VSFilterMod: 确定当前图层对应的通道
+            // IMAGE_TYPE_CHARACTER(0) -> channel 0 (primary)
+            // IMAGE_TYPE_OUTLINE(1) -> channel 2 (border)
+            // IMAGE_TYPE_SHADOW(2) -> channel 3 (shadow)
+            int channel = 0;
+            switch (cur->type) {
+                case 0: channel = 0; break; // primary fill
+                case 1: channel = 2; break; // border/outline
+                case 2: channel = 3; break; // shadow
+                default: channel = 0; break;
             }
 
-            const VSFModImage *texture = (has_textures && m_image_state.active[channel])
-                                         ? m_image_state.images[channel] : NULL;
+            // VSFilterMod: 优先使用事件级别的 \Nimg 纹理路径
+            const VSFModImage *texture = NULL;
+            if (cur->channel_images[channel] && cur->channel_images[channel][0]) {
+                // 事件级别纹理: 从 ASS_Image 的 channel_images 路径加载
+                VSFModImage *evt_img = vsfmod_image_load(&m_image_cache, cur->channel_images[channel]);
+                if (evt_img) {
+                    texture = evt_img;
+                    // 不需要手动 release，缓存会管理生命周期
+                }
+            }
+            // 回退到全局纹理
+            if (!texture && m_image_state.active[channel]) {
+                texture = m_image_state.images[channel];
+            }
 
             if (texture && texture->pixels) {
                 // Textured blend: use texture colors instead of solid color

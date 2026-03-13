@@ -120,14 +120,14 @@ $(DIST_DIR)/lib/libfontconfig.a: $(DIST_DIR)/lib/libharfbuzz.a $(DIST_DIR)/lib/l
 
 
 # libass
-build/lib/libass/configured: lib/libass
-	cd lib/libass && $(RECONF_AUTO)
-	$(call PREPARE_SRC_VPATH,libass)
+build/lib/libass/configured: lib/libass $(wildcard $(BASE_DIR)build/patches/libass/*.patch)
+	$(call PREPARE_SRC_PATCHED,libass)
+	cd build/lib/libass && $(RECONF_AUTO)
 	touch build/lib/libass/configured
 
 $(DIST_DIR)/lib/libass.a: $(DIST_DIR)/lib/libfontconfig.a $(DIST_DIR)/lib/libharfbuzz.a $(DIST_DIR)/lib/libexpat.a $(DIST_DIR)/lib/libfribidi.a $(DIST_DIR)/lib/libfreetype.a $(DIST_DIR)/lib/libbrotlidec.a build/lib/libass/configured
 	cd build/lib/libass && \
-	$(call CONFIGURE_AUTO,../../../lib/libass) \
+	$(call CONFIGURE_AUTO) \
 		--disable-asm \
 		--enable-fontconfig \
 	&& \
