@@ -675,6 +675,8 @@ public:
 
             if (texture && texture->pixels) {
                 // Textured blend: use texture colors instead of solid color
+                // VSFilterMod 语义: 图片从图形区域的左上角 (0,0) 开始映射
+                // 而非全局屏幕坐标平铺
                 int tex_w = texture->width;
                 int tex_h = texture->height;
                 const uint8_t *tex_pixels = texture->pixels;
@@ -682,7 +684,8 @@ public:
                 int buf_line_coord = cury * width;
                 for (int y = 0, bitmap_offset = 0; y < curh; y++, bitmap_offset += curs, buf_line_coord += width)
                 {
-                    int tex_y = ((cur->dst_y + y) % tex_h + tex_h) % tex_h;
+                    // 纹理 Y 坐标: 从图形自身的顶部开始 (y=0 对应纹理第0行)
+                    int tex_y = y % tex_h;
                     const uint8_t *tex_row = tex_pixels + tex_y * tex_w * 4;
 
                     for (int x = 0; x < curw; x++)
@@ -690,7 +693,8 @@ public:
                         float pix_alpha = bitmap[bitmap_offset + x] * normalized_a / 255.0;
                         if (pix_alpha < MIN_UINT8_CAST) continue;
 
-                        int tex_x = ((cur->dst_x + x) % tex_w + tex_w) % tex_w;
+                        // 纹理 X 坐标: 从图形自身的左侧开始 (x=0 对应纹理第0列)
+                        int tex_x = x % tex_w;
                         const uint8_t *tp = tex_row + tex_x * 4;
 
                         // Combine glyph alpha with texture alpha
