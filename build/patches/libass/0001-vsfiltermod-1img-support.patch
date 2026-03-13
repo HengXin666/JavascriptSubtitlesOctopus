@@ -258,7 +258,7 @@ index fae575a..db1aaa5 100644
      }
  
 diff --git a/libass/ass_render.c b/libass/ass_render.c
-index d0e1447..86902d3 100644
+index d0e1447..089605c 100644
 --- a/libass/ass_render.c
 +++ b/libass/ass_render.c
 @@ -224,6 +224,23 @@ static ASS_Image *my_draw_bitmap(unsigned char *bitmap, int bitmap_w,
@@ -503,22 +503,15 @@ index d0e1447..86902d3 100644
          info->hspacing_scaled = 0;
          info->scale_fix = 1;
  
-@@ -2297,6 +2441,11 @@ static void reorder_text(RenderContext *state)
-         while (info) {
-             info->pos.x = info->offset.x + cluster_pen.x;
-             info->pos.y = info->offset.y + cluster_pen.y;
-+            // VSFilterMod: \fsvp 垂直位置偏移
-+            if (info->fsvp != 0) {
-+                double fsvp_pixels = info->fsvp * state->screen_scale_y;
-+                info->pos.y += double_to_d6(fsvp_pixels);
-+            }
-             cluster_pen.x += info->advance.x;
-             cluster_pen.y += info->advance.y;
-             info = info->next;
-@@ -2423,6 +2572,21 @@ static void calculate_rotation_params(RenderContext *state, ASS_DRect *bbox,
+@@ -2423,6 +2567,26 @@ static void calculate_rotation_params(RenderContext *state, ASS_DRect *bbox,
                      render_priv->par_scale_x);
              info->shift.y = info->pos.y + double_to_d6(device_y - center.y +
                      info->shadow_y * state->border_scale_y);
++            // VSFilterMod: \fsvp 垂直位置偏移（在最终 shift 上应用，不影响排版）
++            if (info->fsvp != 0) {
++                double fsvp_pixels = info->fsvp * state->screen_scale_y;
++                info->shift.y += double_to_d6(fsvp_pixels);
++            }
 +            // VSFilterMod: \rnd/\rndx/\rndy 随机位置抖动
 +            if (info->has_rnd) {
 +                unsigned int seed = (unsigned int)(i * 1000 + (info->symbol & 0xFFFF));
