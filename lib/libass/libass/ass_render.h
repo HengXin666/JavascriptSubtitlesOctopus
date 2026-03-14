@@ -171,7 +171,7 @@ typedef struct glyph_info {
     double shadow_y;
     double frx, fry, frz;       // rotation
     double fax, fay;            // text shearing
-    double fsvp;                 // vertical perspective shearing (like fax)
+    double fsvp;                 // VSFilterMod: vertical position shift in pixels
     double scale_x, scale_y;
     // amount of scale_x,y change due to fix_glyph_scaling
     // scale_fix = before / after
@@ -239,7 +239,7 @@ struct render_context {
     int justify;                // justify instructions
     double frx, fry, frz;
     double fax, fay;            // text shearing
-    double fsvp;                 // vertical perspective shearing (like fax)
+    double fsvp;                 // VSFilterMod: vertical position shift in pixels
     double pos_x, pos_y;        // position
     double org_x, org_y;        // origin
     double scale_x, scale_y;

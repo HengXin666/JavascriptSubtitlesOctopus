@@ -28,7 +28,7 @@
 #include "ass_render.h"
 #include "ass_parse.h"
 
-#define MAX_VALID_NARGS 7
+#define MAX_VALID_NARGS 8
 #define MAX_BE 127
 #define NBSP 0xa0   // unicode non-breaking space character
 
@@ -535,6 +535,70 @@ char *ass_parse_tags(RenderContext *state, char *p, char *end, double pwr,
                 k = ((double) (int32_t) ((uint32_t) t - t1)) / delta_t;
             x = k * (x2 - x1) + x1;
             y = k * (y2 - y1) + y1;
+            if (!(state->evt_type & EVENT_POSITIONED)) {
+                state->pos_x = x;
+                state->pos_y = y;
+                state->detect_collisions = 0;
+                state->evt_type |= EVENT_POSITIONED;
+            }
+        } else if (complex_tag("moves4")) {
+            // VSFilterMod: \moves4(x1,y1,x2,y2,x3,y3,x4,y4) - 四点三次贝塞尔曲线移动
+            // P(t) = (1-t)^3*P1 + 3*(1-t)^2*t*P2 + 3*(1-t)*t^2*P3 + t^3*P4
+            if (nargs != 8)
+                continue;
+            double x1 = argtod(args[0]);
+            double y1 = argtod(args[1]);
+            double x2 = argtod(args[2]);
+            double y2 = argtod(args[3]);
+            double x3 = argtod(args[4]);
+            double y3 = argtod(args[5]);
+            double x4 = argtod(args[6]);
+            double y4 = argtod(args[7]);
+            int32_t t = render_priv->time - state->event->Start;
+            int32_t duration = state->event->Duration;
+            double k;
+            if (duration <= 0)
+                k = 0.;
+            else if (t <= 0)
+                k = 0.;
+            else if (t >= duration)
+                k = 1.;
+            else
+                k = (double) t / duration;
+            double u = 1 - k;
+            double x = u*u*u*x1 + 3*u*u*k*x2 + 3*u*k*k*x3 + k*k*k*x4;
+            double y = u*u*u*y1 + 3*u*u*k*y2 + 3*u*k*k*y3 + k*k*k*y4;
+            if (!(state->evt_type & EVENT_POSITIONED)) {
+                state->pos_x = x;
+                state->pos_y = y;
+                state->detect_collisions = 0;
+                state->evt_type |= EVENT_POSITIONED;
+            }
+        } else if (complex_tag("moves3")) {
+            // VSFilterMod: \moves3(x1,y1,x2,y2,x3,y3) - 三点二次贝塞尔曲线移动
+            // P(t) = (1-t)^2*P1 + 2*(1-t)*t*P2 + t^2*P3
+            if (nargs != 6)
+                continue;
+            double x1 = argtod(args[0]);
+            double y1 = argtod(args[1]);
+            double x2 = argtod(args[2]);
+            double y2 = argtod(args[3]);
+            double x3 = argtod(args[4]);
+            double y3 = argtod(args[5]);
+            int32_t t = render_priv->time - state->event->Start;
+            int32_t duration = state->event->Duration;
+            double k;
+            if (duration <= 0)
+                k = 0.;
+            else if (t <= 0)
+                k = 0.;
+            else if (t >= duration)
+                k = 1.;
+            else
+                k = (double) t / duration;
+            double u = 1 - k;
+            double x = u*u*x1 + 2*u*k*x2 + k*k*x3;
+            double y = u*u*y1 + 2*u*k*y2 + k*k*y3;
             if (!(state->evt_type & EVENT_POSITIONED)) {
                 state->pos_x = x;
                 state->pos_y = y;

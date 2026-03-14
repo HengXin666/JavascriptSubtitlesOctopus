@@ -1409,11 +1409,9 @@ static void calc_transform_matrix(RenderContext *state,
     double sy =  sin(fry), cy = cos(fry);
     double sz = -sin(frz), cz = cos(frz);
 
-    // \fsvp 作为水平方向的错切，效果类似于 \fax
-    // 将 fsvp 转换为度数对应的 tan 值并叠加到 fax 上
-    double fsvp_rad = ASS_PI / 180 * info->fsvp;
-    double fsvp_shear = tan(fsvp_rad);
-    double fax = (info->fax + fsvp_shear) * info->scale_x / info->scale_y;
+    // VSFilterMod: \fsvp 是垂直位置偏移（Vertical Shift in Pixels），
+    // 将其值直接加到 Y 方向的位置偏移上，而非水平错切
+    double fax = info->fax * info->scale_x / info->scale_y;
     double fay = info->fay * info->scale_y / info->scale_x;
     double x1[3] = { 1, fax, info->shift.x + info->asc * fax };
     double y1[3] = { fay, 1, info->shift.y };
@@ -1441,7 +1439,11 @@ static void calc_transform_matrix(RenderContext *state,
 
     double scale_x = dist * render_priv->par_scale_x;
     double offs_x = info->pos.x - info->shift.x * render_priv->par_scale_x;
-    double offs_y = info->pos.y - info->shift.y;
+    // \fsvp: 垂直位置偏移，值为 PlayRes 坐标系中的像素数
+    // 需要转换为设备坐标并转为26.6定点数格式（与 info->pos.y 一致）
+    double fsvp_device = info->fsvp * render_priv->frame_content_height
+                         / render_priv->track->PlayResY;
+    double offs_y = info->pos.y - info->shift.y + fsvp_device * 64.0;
     for (int i = 0; i < 3; i++) {
         m[0][i] = z4[i] * offs_x + x4[i] * scale_x;
         m[1][i] = z4[i] * offs_y + y3[i] * dist;
