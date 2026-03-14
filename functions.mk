@@ -7,17 +7,14 @@
 
 ## Build stuff
 
-# @arg1: name of submodule
+# @arg1: name of lib directory
 define PREPARE_SRC_PATCHED
 	rm -rf build/lib/$(1)
 	mkdir -p build/lib
 	cp -r lib/$(1) build/lib/$(1)
-	$(foreach file, $(wildcard $(BASE_DIR)build/patches/$(1)/*.patch), \
-		patch -d "$(BASE_DIR)build/lib/$(1)" -Np1 -i $(file) && \
-	) :
 endef
 
-# @arg1: name of submdolue
+# @arg1: name of lib directory
 define PREPARE_SRC_VPATH
 	rm -rf build/lib/$(1)
 	mkdir -p build/lib/$(1)
@@ -43,16 +40,3 @@ endef
 
 # FIXME: Propagate jobserver info with $(MAKE) and set up our makefile for fully parallel builds
 JSO_MAKE := emmake make -j "$(shell nproc)"
-
-## Clean and git related
-
-# @arg1: submodule name
-define TR_GIT_SM_RESET
-git-$(1):
-	cd lib/$(1) && \
-	git reset --hard && \
-	git clean -dfx
-	git submodule update --force lib/$(1)
-
-.PHONY: git-$(1)
-endef

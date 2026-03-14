@@ -18,7 +18,7 @@ subtitleoctopus: dist
 include functions.mk
 
 # FriBidi
-build/lib/fribidi/configure: lib/fribidi $(wildcard $(BASE_DIR)build/patches/fribidi/*.patch)
+build/lib/fribidi/configure: lib/fribidi
 	$(call PREPARE_SRC_PATCHED,fribidi)
 	cd build/lib/fribidi && $(RECONF_AUTO)
 
@@ -47,7 +47,7 @@ $(DIST_DIR)/lib/libexpat.a: build/lib/expat/configured
 	$(JSO_MAKE) install
 
 # Brotli
-build/lib/brotli/configured: lib/brotli $(wildcard $(BASE_DIR)build/patches/brotli/*.patch)
+build/lib/brotli/configured: lib/brotli
 	$(call PREPARE_SRC_PATCHED,brotli)
 	touch build/lib/brotli/configured
 
@@ -62,7 +62,7 @@ $(DIST_DIR)/lib/libbrotlicommon.a: build/lib/brotli/configured
 
 
 # Freetype without Harfbuzz
-build/lib/freetype/configure: lib/freetype $(wildcard $(BASE_DIR)build/patches/freetype/*.patch)
+build/lib/freetype/configure: lib/freetype
 	$(call PREPARE_SRC_PATCHED,freetype)
 	cd build/lib/freetype && $(RECONF_AUTO)
 
@@ -78,7 +78,7 @@ build/lib/freetype/build_hb/dist_hb/lib/libfreetype.a: $(DIST_DIR)/lib/libbrotli
 		$(JSO_MAKE) install
 
 # Harfbuzz
-build/lib/harfbuzz/configure: lib/harfbuzz $(wildcard $(BASE_DIR)build/patches/harfbuzz/*.patch)
+build/lib/harfbuzz/configure: lib/harfbuzz
 	$(call PREPARE_SRC_PATCHED,harfbuzz)
 	cd build/lib/harfbuzz && $(RECONF_AUTO)
 
@@ -104,7 +104,7 @@ $(DIST_DIR)/lib/libfreetype.a: $(DIST_DIR)/lib/libharfbuzz.a $(DIST_DIR)/lib/lib
 	$(JSO_MAKE) install
 
 # Fontconfig
-build/lib/fontconfig/configure: lib/fontconfig $(wildcard $(BASE_DIR)build/patches/fontconfig/*.patch)
+build/lib/fontconfig/configure: lib/fontconfig
 	$(call PREPARE_SRC_PATCHED,fontconfig)
 	cd build/lib/fontconfig && $(RECONF_AUTO)
 
@@ -120,7 +120,7 @@ $(DIST_DIR)/lib/libfontconfig.a: $(DIST_DIR)/lib/libharfbuzz.a $(DIST_DIR)/lib/l
 
 
 # libass
-build/lib/libass/configured: lib/libass $(wildcard $(BASE_DIR)build/patches/libass/*.patch)
+build/lib/libass/configured: lib/libass
 	$(call PREPARE_SRC_PATCHED,libass)
 	cd build/lib/libass && $(RECONF_AUTO)
 	touch build/lib/libass/configured
@@ -215,16 +215,7 @@ clean-libs:
 clean-octopus:
 	cd src && git clean -fdX
 
-git-checkout:
-	git submodule sync --recursive && \
-	git submodule update --init --recursive
-
-SUBMODULES := brotli expat fontconfig freetype fribidi harfbuzz libass
-git-smreset: $(addprefix git-, $(SUBMODULES))
-
-$(foreach subm, $(SUBMODULES), $(eval $(call TR_GIT_SM_RESET,$(subm))))
-
 server: # Node http server npm i -g http-server
 	http-server
 
-.PHONY: clean clean-dist clean-libs clean-octopus git-checkout git-smreset server
+.PHONY: clean clean-dist clean-libs clean-octopus server
