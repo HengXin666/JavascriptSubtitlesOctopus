@@ -225,9 +225,11 @@ static ASS_Image *my_draw_bitmap(unsigned char *bitmap, int bitmap_w,
     img->buffer = source ? NULL : bitmap;
     img->ref_count = 0;
 
-    // VSFilterMod: 初始化 channel_images 为 NULL
+    // VSFilterMod: 初始化 channel_images 和 inv_transform
     for (int i = 0; i < 4; i++)
         img->result.channel_images[i] = NULL;
+    img->result.has_inv_transform = 0;
+    memset(img->result.inv_transform, 0, sizeof(img->result.inv_transform));
 
     return &img->result;
 }
@@ -819,17 +821,21 @@ static void blend_vector_clip(RenderContext *state, ASS_Image *head)
  * \param channel_images 来自 CombinedBitmapInfo 的图片路径数组
  */
 static void set_channel_images_on_new_images(ASS_Image *first_new,
-                                              char **channel_images)
+                                              CombinedBitmapInfo *info)
 {
     for (ASS_Image *img = first_new; img; img = img->next) {
         for (int i = 0; i < 4; i++) {
             // 使用 strdup 创建独立副本，避免悬垂指针
             // （CombinedBitmapInfo 的字符串会在 render_text 末尾被释放）
-            if (channel_images[i])
-                img->channel_images[i] = strdup(channel_images[i]);
+            if (info->channel_images[i])
+                img->channel_images[i] = strdup(info->channel_images[i]);
             else
                 img->channel_images[i] = NULL;
         }
+        // 复制逆变换矩阵
+        img->has_inv_transform = info->has_inv_transform;
+        if (info->has_inv_transform)
+            memcpy(img->inv_transform, info->inv_transform, sizeof(img->inv_transform));
     }
 }
 
@@ -856,7 +862,7 @@ static ASS_Image *render_text(RenderContext *state)
             render_glyph(state, info->bm_s, info->x, info->y, info->c[3], 0,
                          1000000, tail, IMAGE_TYPE_SHADOW, info->image);
         if (tail != prev_tail)
-            set_channel_images_on_new_images(*prev_tail, info->channel_images);
+            set_channel_images_on_new_images(*prev_tail, info);
     }
 
     for (unsigned i = 0; i < n_bitmaps; i++) {
@@ -874,7 +880,7 @@ static ASS_Image *render_text(RenderContext *state)
                 render_glyph(state, info->bm_o, info->x, info->y, info->c[2],
                              0, 1000000, tail, IMAGE_TYPE_OUTLINE, info->image);
             if (tail != prev_tail)
-                set_channel_images_on_new_images(*prev_tail, info->channel_images);
+                set_channel_images_on_new_images(*prev_tail, info);
         }
     }
 
@@ -893,7 +899,7 @@ static ASS_Image *render_text(RenderContext *state)
                                  info->c[0], 0, 1000000, tail,
                                  IMAGE_TYPE_CHARACTER, info->image);
                 if (tail != prev_tail)
-                    set_channel_images_on_new_images(*prev_tail, info->channel_images);
+                    set_channel_images_on_new_images(*prev_tail, info);
             } else {
                 prev_tail = tail;
                 *prev_tail = NULL;
@@ -902,7 +908,7 @@ static ASS_Image *render_text(RenderContext *state)
                                  info->c[1], 0, 1000000, tail,
                                  IMAGE_TYPE_CHARACTER, info->image);
                 if (tail != prev_tail)
-                    set_channel_images_on_new_images(*prev_tail, info->channel_images);
+                    set_channel_images_on_new_images(*prev_tail, info);
             }
         } else if (info->effect_type == EF_KARAOKE_KF) {
             prev_tail = tail;
@@ -912,7 +918,7 @@ static ASS_Image *render_text(RenderContext *state)
                              info->c[1], info->effect_timing, tail,
                              IMAGE_TYPE_CHARACTER, info->image);
             if (tail != prev_tail)
-                set_channel_images_on_new_images(*prev_tail, info->channel_images);
+                set_channel_images_on_new_images(*prev_tail, info);
         } else {
             prev_tail = tail;
             *prev_tail = NULL;
@@ -920,7 +926,7 @@ static ASS_Image *render_text(RenderContext *state)
                 render_glyph(state, info->bm, info->x, info->y, info->c[0],
                              0, 1000000, tail, IMAGE_TYPE_CHARACTER, info->image);
             if (tail != prev_tail)
-                set_channel_images_on_new_images(*prev_tail, info->channel_images);
+                set_channel_images_on_new_images(*prev_tail, info);
         }
     }
 
@@ -1473,6 +1479,42 @@ get_bitmap_glyph(RenderContext *state, GlyphInfo *info,
         m2[i][2] = m1[i][0] * tr->offset.x + m1[i][1] * tr->offset.y + m1[i][2];
     }
     memcpy(m, m2, sizeof(m));
+
+    // VSFilterMod: 计算 bitmap→纹理 坐标的逆变换矩阵
+    // 如果有 channel_images，需要将变换后的 bitmap 坐标映射回原始绘图坐标
+    info->has_inv_transform = 0;
+    {
+        bool has_img = false;
+        for (int ci = 0; ci < 4; ci++) {
+            if (info->channel_images[ci].str && info->channel_images[ci].len > 0) {
+                has_img = true;
+                break;
+            }
+        }
+        if (has_img && fabs(m2[2][2]) > 1e-6) {
+            // 简化为 2D 仿射变换（忽略透视分量 m[2][0], m[2][1]）
+            double w = m2[2][2];
+            double a = m2[0][0] / w, b = m2[0][1] / w;
+            double c = m2[1][0] / w, d = m2[1][1] / w;
+            double det = a * d - b * c;
+            if (fabs(det) > 1e-10) {
+                double inv_det = 1.0 / det;
+                // 逆矩阵: 从屏幕坐标 (sx, sy) → 原始坐标 (ox, oy)
+                // ox = (d * sx - b * sy) / det + tx_offset
+                // oy = (-c * sx + a * sy) / det + ty_offset
+                // tx_offset 和 ty_offset 包含平移分量的逆变换
+                double e = m2[0][2] / w; // x平移
+                double f = m2[1][2] / w; // y平移
+                info->inv_transform[0][0] =  d * inv_det;
+                info->inv_transform[0][1] = -b * inv_det;
+                info->inv_transform[0][2] = (b * f - d * e) * inv_det;
+                info->inv_transform[1][0] = -c * inv_det;
+                info->inv_transform[1][1] =  a * inv_det;
+                info->inv_transform[1][2] = (c * e - a * f) * inv_det;
+                info->has_inv_transform = 1;
+            }
+        }
+    }
 
     if (info->effect_type == EF_KARAOKE_KF)
         ass_outline_update_min_transformed_x(&info->outline->outline[0], m, leftmost_x);
@@ -2644,6 +2686,7 @@ static void render_and_combine_glyphs(RenderContext *state,
                 current_info->max_bitmap_count = MAX_SUB_BITMAPS_INITIAL;
 
                 // VSFilterMod: 复制图片路径（从 ASS_StringView 转换为零终止字符串）
+                current_info->has_inv_transform = 0;
                 for (int ci = 0; ci < 4; ci++) {
                     if (info->channel_images[ci].str && info->channel_images[ci].len > 0) {
                         current_info->channel_images[ci] = malloc(info->channel_images[ci].len + 1);
@@ -2689,6 +2732,13 @@ static void render_and_combine_glyphs(RenderContext *state,
             current_info->bitmaps[current_info->bitmap_count].pos   = pos;
             current_info->bitmaps[current_info->bitmap_count].pos_o = pos_o;
             current_info->bitmap_count++;
+
+            // VSFilterMod: 复制逆变换矩阵（取第一个有效字形的）
+            if (info->has_inv_transform && !current_info->has_inv_transform) {
+                memcpy(current_info->inv_transform, info->inv_transform,
+                       sizeof(info->inv_transform));
+                current_info->has_inv_transform = 1;
+            }
 
             current_info->x = FFMIN(current_info->x, pos.x);
             current_info->y = FFMIN(current_info->y, pos.y);

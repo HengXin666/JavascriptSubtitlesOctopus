@@ -8,6 +8,7 @@
 #include <string.h>
 #include <string>
 #include <cstdint>
+#include <cmath>
 #include <ass/ass.h>
 
 #include "libass.cpp"
@@ -675,27 +676,44 @@ public:
 
             if (texture && texture->pixels) {
                 // Textured blend: use texture colors instead of solid color
-                // VSFilterMod 语义: 图片从图形区域的左上角 (0,0) 开始映射
-                // 而非全局屏幕坐标平铺
+                // VSFilterMod 语义: 图片从绘图区域的原始坐标空间平铺
+                // 当有变换矩阵（\fsvp/\frz等）时，使用逆变换将 bitmap 坐标映射回原始坐标
                 int tex_w = texture->width;
                 int tex_h = texture->height;
                 const uint8_t *tex_pixels = texture->pixels;
 
+                // 判断是否需要使用逆变换矩阵
+                bool use_inv = (cur->has_inv_transform != 0);
+
                 int buf_line_coord = cury * width;
                 for (int y = 0, bitmap_offset = 0; y < curh; y++, bitmap_offset += curs, buf_line_coord += width)
                 {
-                    // 纹理 Y 坐标: 从图形自身的顶部开始 (y=0 对应纹理第0行)
-                    int tex_y = y % tex_h;
-                    const uint8_t *tex_row = tex_pixels + tex_y * tex_w * 4;
-
                     for (int x = 0; x < curw; x++)
                     {
                         float pix_alpha = bitmap[bitmap_offset + x] * normalized_a / 255.0;
                         if (pix_alpha < MIN_UINT8_CAST) continue;
 
-                        // 纹理 X 坐标: 从图形自身的左侧开始 (x=0 对应纹理第0列)
-                        int tex_x = x % tex_w;
-                        const uint8_t *tp = tex_row + tex_x * 4;
+                        int tex_x, tex_y;
+                        if (use_inv) {
+                            // 使用逆变换矩阵：将 bitmap 屏幕坐标反推到原始绘图坐标
+                            double sx = (double)(cur->dst_x + x);
+                            double sy = (double)(cur->dst_y + y);
+                            // inv_transform 映射：屏幕坐标 → 原始轮廓坐标 (26.6 定点数)
+                            double ox = cur->inv_transform[0][0] * sx + cur->inv_transform[0][1] * sy + cur->inv_transform[0][2];
+                            double oy = cur->inv_transform[1][0] * sx + cur->inv_transform[1][1] * sy + cur->inv_transform[1][2];
+                            // 转换为像素坐标 (26.6 定点数 / 64)
+                            int px = (int)floor(ox / 64.0);
+                            int py = (int)floor(oy / 64.0);
+                            // wrap 平铺（处理负数情况）
+                            tex_x = ((px % tex_w) + tex_w) % tex_w;
+                            tex_y = ((py % tex_h) + tex_h) % tex_h;
+                        } else {
+                            // 无变换：直接使用局部坐标平铺
+                            tex_x = x % tex_w;
+                            tex_y = y % tex_h;
+                        }
+
+                        const uint8_t *tp = tex_pixels + (tex_y * tex_w + tex_x) * 4;
 
                         // Combine glyph alpha with texture alpha
                         float tex_alpha = pix_alpha * (tp[3] / 255.0);

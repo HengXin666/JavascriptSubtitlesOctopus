@@ -85,6 +85,14 @@ typedef struct ass_image {
     // NULL if no image is set for that channel
     const char *channel_images[4];
 
+    // VSFilterMod: bitmap->texture 坐标逆变换矩阵 (2x3 仿射变换)
+    // 用于将 bitmap 像素坐标 (bx, by) 映射回原始绘图坐标 (tx, ty):
+    //   tx = inv_transform[0][0] * bx + inv_transform[0][1] * by + inv_transform[0][2]
+    //   ty = inv_transform[1][0] * bx + inv_transform[1][1] * by + inv_transform[1][2]
+    // has_inv_transform 为 true 时才使用逆变换，否则使用简单的 (x, y) 映射
+    double inv_transform[2][3];
+    int has_inv_transform;
+
     // New fields can be added here in new ABI-compatible library releases.
 } ASS_Image;
 

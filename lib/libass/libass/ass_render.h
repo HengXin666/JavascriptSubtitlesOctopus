@@ -119,6 +119,9 @@ typedef struct {
     // channel 0 = primary (\1img), 1 = secondary (\2img),
     // 2 = border (\3img), 3 = shadow (\4img)
     char *channel_images[4];
+    // VSFilterMod: bitmap->texture 坐标逆变换矩阵
+    double inv_transform[2][3];
+    int has_inv_transform;
 } CombinedBitmapInfo;
 
 typedef struct {
@@ -141,6 +144,9 @@ typedef struct glyph_info {
     int drawing_pbo;
     // VSFilterMod: per-channel image fill paths (\1img, \2img, \3img, \4img)
     ASS_StringView channel_images[4];
+    // VSFilterMod: bitmap->texture 坐标逆变换矩阵
+    double inv_transform[2][3];
+    int has_inv_transform;
     OutlineHashValue *outline;
     ASS_Transform transform;
     ASS_Rect bbox;
