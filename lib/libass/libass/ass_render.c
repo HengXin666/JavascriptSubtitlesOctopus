@@ -1493,6 +1493,8 @@ get_bitmap_glyph(RenderContext *state, GlyphInfo *info,
         }
         if (has_img && fabs(m2[2][2]) > 1e-6) {
             // 简化为 2D 仿射变换（忽略透视分量 m[2][0], m[2][1]）
+            // m2 归一化后将 26.6 轮廓坐标映射到 26.6 像素坐标
+            // 逆变换矩阵调整为直接映射：屏幕像素坐标 → 绘图像素坐标
             double w = m2[2][2];
             double a = m2[0][0] / w, b = m2[0][1] / w;
             double c = m2[1][0] / w, d = m2[1][1] / w;
@@ -1507,10 +1509,10 @@ get_bitmap_glyph(RenderContext *state, GlyphInfo *info,
                 double f = m2[1][2] / w; // y平移
                 info->inv_transform[0][0] =  d * inv_det;
                 info->inv_transform[0][1] = -b * inv_det;
-                info->inv_transform[0][2] = (b * f - d * e) * inv_det;
+                info->inv_transform[0][2] = (b * f - d * e) * inv_det / 64.0;
                 info->inv_transform[1][0] = -c * inv_det;
                 info->inv_transform[1][1] =  a * inv_det;
-                info->inv_transform[1][2] = (c * e - a * f) * inv_det;
+                info->inv_transform[1][2] = (c * e - a * f) * inv_det / 64.0;
                 info->has_inv_transform = 1;
             }
         }

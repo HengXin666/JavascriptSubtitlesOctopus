@@ -695,15 +695,13 @@ public:
 
                         int tex_x, tex_y;
                         if (use_inv) {
-                            // 使用逆变换矩阵：将 bitmap 屏幕坐标反推到原始绘图坐标
+                            // 使用逆变换矩阵：将 bitmap 屏幕像素坐标反推到原始绘图像素坐标
                             double sx = (double)(cur->dst_x + x);
                             double sy = (double)(cur->dst_y + y);
-                            // inv_transform 映射：屏幕坐标 → 原始轮廓坐标 (26.6 定点数)
                             double ox = cur->inv_transform[0][0] * sx + cur->inv_transform[0][1] * sy + cur->inv_transform[0][2];
                             double oy = cur->inv_transform[1][0] * sx + cur->inv_transform[1][1] * sy + cur->inv_transform[1][2];
-                            // 转换为像素坐标 (26.6 定点数 / 64)
-                            int px = (int)floor(ox / 64.0);
-                            int py = (int)floor(oy / 64.0);
+                            int px = (int)floor(ox);
+                            int py = (int)floor(oy);
                             // wrap 平铺（处理负数情况）
                             tex_x = ((px % tex_w) + tex_w) % tex_w;
                             tex_y = ((py % tex_h) + tex_h) % tex_h;
