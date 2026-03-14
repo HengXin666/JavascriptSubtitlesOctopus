@@ -28,10 +28,12 @@ jobs:
     - name: Calculate Hash Key
       id: cache_config
       run: |
-        # Invalidate cache if submodules, patches or emscripten version changed
+        # Invalidate cache if submodules, patches, emscripten version or libass source changed
         key="$(find build/patches/ -type f | sort | xargs cat .gitmodules Dockerfile \
                Makefile Makefile_licence | shasum -a 256 | cut -d' ' -f1)"
-        echo "key=0-${key}" >> $GITHUB_OUTPUT
+        # 也计算 lib/libass 源码的 hash（直接修改的文件）
+        libass_key="$(find lib_/libass/libass/ -type f \( -name '*.c' -o -name '*.h' \) | sort | xargs cat | shasum -a 256 | cut -d' ' -f1)"
+        echo "key=1-${key}-${libass_key}" >> $GITHUB_OUTPUT
 
     - name: Ensure Cache will be newer than Checkout
       run: |
