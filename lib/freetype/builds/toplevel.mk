@@ -169,9 +169,7 @@ endif # test check_platform
 .PHONY: check_out_submodule copy_submodule
 
 check_out_submodule:
-	$(info Checking out submodule in `subprojects/dlg')
-	git submodule init
-	git submodule update
+	$(info Submodule checkout skipped - dlg sources are already included)
 
 copy_submodule:
 	$(info Copying files from `subprojects/dlg' to `src/dlg' and `include/dlg')
